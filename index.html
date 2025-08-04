@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Face Interface</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Roboto', sans-serif;
+        }
+        
+        #output-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+        
+        #video-input {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 1;
+            z-index: 5;
+        }
+        
+        .hud-element {
+            position: absolute;
+            color: #64ffda;
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 0 5px rgba(100, 255, 218, 0.7);
+            pointer-events: none;
+            z-index: 20;
+            opacity: 0;
+            transition: opacity 0.5s ease;
+        }
+        
+        .hud-box {
+            border: 1px solid rgba(100, 255, 218, 0.5);
+            background-color: rgba(0, 20, 40, 0.3);
+            border-radius: 5px;
+            padding: 10px;
+            backdrop-filter: blur(2px);
+        }
+        
+        .scanning-line {
+            position: absolute;
+            height: 2px;
+            background: linear-gradient(to right, transparent, #64ffda, transparent);
+            z-index: 15;
+            opacity: 0;
+        }
+        
+        .circle-scanner {
+            position: absolute;
+            border: 1px solid #64ffda;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(100, 255, 218, 0.5);
+            z-index: 15;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .target-box {
+            position: absolute;
+            border: 1px solid #64ffda;
+            z-index: 15;
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .target-corner {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border: 1px solid #64ffda;
+            z-index: 16;
+        }
+        
+        .top-left {
+            top: -1px;
+            left: -1px;
+            border-right: none;
+            border-bottom: none;
+        }
+        
+        .top-right {
+            top: -1px;
+            right: -1px;
+            border-left: none;
+            border-bottom: none;
+        }
+        
+        .bottom-left {
+            bottom: -1px;
+            left: -1px;
+            border-right: none;
+            border-top: none;
+        }
+        
+        .bottom-right {
+            bottom: -1px;
+            right: -1px;
+            border-left: none;
+            border-top: none;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 0.3; }
+            50% { opacity: 0.8; }
+            100% { opacity: 0.3; }
+        }
+        
+        @keyframes rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes scan {
+            0% { top: 0; }
+            100% { top: 100%; }
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        @keyframes typing {
+            from { width: 0 }
+            to { width: 100% }
+        }
+        
+        .typing-text {
+            overflow: hidden;
+            white-space: nowrap;
+            animation: typing 1s steps(40, end);
+        }
+        
+        .loading-bar {
+            height: 4px;
+            background-color: #64ffda;
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+        
+        .radar {
+            position: absolute;
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            background-color: rgba(0, 20, 40, 0.3);
+            border: 1px solid rgba(100, 255, 218, 0.5);
+            overflow: hidden;
+        }
+        
+        .radar-sweep {
+            position: absolute;
+            width: 150px;
+            height: 150px;
+            top: 0;
+            left: 0;
+            border-radius: 50%;
+            clip-path: polygon(50% 50%, 50% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%, 50% 0%);
+            background: linear-gradient(90deg, rgba(100, 255, 218, 0) 0%, rgba(100, 255, 218, 0.3) 100%);
+            transform-origin: center;
+            animation: rotate 3s infinite linear;
+        }
+        
+        .radar-center {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #64ffda;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(100, 255, 218, 0.8);
+        }
+        
+        .radar-ring {
+            position: absolute;
+            border: 1px dashed rgba(100, 255, 218, 0.5);
+            border-radius: 50%;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        
+        .battery-indicator {
+            width: 80px;
+            height: 30px;
+            border: 1px solid #64ffda;
+            padding: 2px;
+            position: relative;
+        }
+        
+        .battery-level {
+            height: 100%;
+            background-color: #64ffda;
+            width: 85%;
+        }
+        
+        .battery-cap {
+            position: absolute;
+            width: 4px;
+            height: 15px;
+            background-color: #64ffda;
+            right: -5px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            color: #64ffda;
+        }
+        
+        .loading-progress {
+            width: 300px;
+            height: 4px;
+            background-color: rgba(100, 255, 218, 0.2);
+            margin-top: 20px;
+            position: relative;
+        }
+        
+        .loading-bar-progress {
+            position: absolute;
+            height: 100%;
+            background-color: #64ffda;
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+        
+        .glitch {
+            position: relative;
+        }
+        
+        .glitch::before,
+        .glitch::after {
+            content: attr(data-text);
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        .glitch::before {
+            left: 2px;
+            text-shadow: -1px 0 #ff00ff;
+            animation: glitch-animation 2s infinite linear alternate-reverse;
+        }
+        
+        .glitch::after {
+            left: -2px;
+            text-shadow: 1px 0 #00ffff;
+            animation: glitch-animation 3s infinite linear alternate-reverse;
+        }
+        
+        @keyframes glitch-animation {
+            0% {
+                clip-path: inset(80% 0 0 0);
+            }
+            20% {
+                clip-path: inset(20% 0 60% 0);
+            }
+            40% {
+                clip-path: inset(40% 0 40% 0);
+            }
+            60% {
+                clip-path: inset(60% 0 20% 0);
+            }
+            80% {
+                clip-path: inset(0 0 80% 0);
+            }
+            100% {
+                clip-path: inset(30% 0 50% 0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="loading-screen">
+        <h1 class="text-4xl mb-2 glitch" data-text="JARVIS INTERFACE">JARVIS INTERFACE</h1>
+        <p class="mb-6">Initializing facial recognition systems...</p>
+        <div class="loading-progress">
+            <div id="loading-bar" class="loading-bar-progress"></div>
+        </div>
+        <p id="loading-status" class="mt-4">Loading core modules...</p>
+    </div>
+
+    <!-- Video Input (Camera) -->
+    <video id="video-input" playsinline></video>
+    
+    <!-- Output Canvas for AR Elements -->
+    <canvas id="output-canvas"></canvas>
+    
+    <!-- HUD Elements -->
+    <div id="face-target" class="target-box">
+        <div class="target-corner top-left"></div>
+        <div class="target-corner top-right"></div>
+        <div class="target-corner bottom-left"></div>
+        <div class="target-corner bottom-right"></div>
+    </div>
+    
+    <div id="scanning-line" class="scanning-line"></div>
+    
+    <div id="face-scanner" class="circle-scanner"></div>
+    
+    <div id="status-text" class="hud-element text-sm" style="top: 20px; left: 20px;">
+        <div class="hud-box">
+            <div class="typing-text">INITIALIZING FACIAL RECOGNITION...</div>
+            <div class="mt-2">
+                <div class="text-xs mb-1">SYSTEM STATUS: <span id="system-status">BOOTING</span></div>
+                <div class="loading-bar" id="status-bar"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="face-data" class="hud-element text-xs" style="top: 120px; left: 20px; width: 200px;">
+        <div class="hud-box">
+            <div class="mb-2">FACIAL ANALYSIS</div>
+            <div class="grid grid-cols-2 gap-1">
+                <div>CONFIDENCE:</div>
+                <div id="face-confidence">0%</div>
+                <div>LANDMARKS:</div>
+                <div id="landmarks-count">0/468</div>
+                <div>TRACKING:</div>
+                <div id="tracking-status">INACTIVE</div>
+                <div>MOOD:</div>
+                <div id="mood-analysis">ANALYZING</div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="system-info" class="hud-element text-xs" style="top: 20px; right: 20px;">
+        <div class="hud-box">
+            <div class="mb-2">SYSTEM DIAGNOSTICS</div>
+            <div class="grid grid-cols-2 gap-1">
+                <div>CPU USAGE:</div>
+                <div id="cpu-usage">32%</div>
+                <div>MEMORY:</div>
+                <div id="memory-usage">1.2GB/4GB</div>
+                <div>FRAMERATE:</div>
+                <div id="framerate">60 FPS</div>
+                <div>LATENCY:</div>
+                <div id="latency">12ms</div>
+            </div>
+            <div class="mt-2">
+                <div class="text-xs mb-1">POWER SYSTEMS</div>
+                <div class="battery-indicator">
+                    <div class="battery-level" id="battery-level"></div>
+                    <div class="battery-cap"></div>
+                </div>
+                <div class="text-xs mt-1" id="battery-text">85% - 4:32:12 REMAINING</div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="radar-display" class="hud-element" style="bottom: 20px; left: 20px;">
+        <div class="radar">
+            <div class="radar-sweep"></div>
+            <div class="radar-ring" style="width: 30%; height: 30%;"></div>
+            <div class="radar-ring" style="width: 60%; height: 60%;"></div>
+            <div class="radar-ring" style="width: 90%; height: 90%;"></div>
+            <div class="radar-center"></div>
+            <div id="radar-blip" style="position: absolute; width: 6px; height: 6px; background-color: #64ffda; border-radius: 50%; top: 50%; left: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 5px #64ffda;"></div>
+        </div>
+    </div>
+    
+    <div id="notifications" class="hud-element text-sm" style="bottom: 20px; right: 20px; width: 250px;">
+        <div class="hud-box">
+            <div class="mb-2">SYSTEM NOTIFICATIONS</div>
+            <div id="notification-list" class="space-y-2">
+                <div class="notification">
+                    <div class="text-xs text-gray-400">16:42:03</div>
+                    <div>Facial recognition system online</div>
+                </div>
+                <div class="notification">
+                    <div class="text-xs text-gray-400">16:42:05</div>
+                    <div>Tracking module initialized</div>
+                </div>
+                <div class="notification">
+                    <div class="text-xs text-gray-400">16:42:10</div>
+                    <div>AR interface rendering</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="center-target" class="hud-element" style="top: 50%; left: 50%; transform: translate(-50%, -50%);">
+        <svg width="100" height="100" viewBox="0 0 100 100" fill="none">
+            <circle cx="50" cy="50" r="48" stroke="#64ffda" stroke-width="1" stroke-dasharray="8 4" />
+            <circle cx="50" cy="50" r="30" stroke="#64ffda" stroke-width="1" />
+            <line x1="0" y1="50" x2="30" y2="50" stroke="#64ffda" stroke-width="1" />
+            <line x1="70" y1="50" x2="100" y2="50" stroke="#64ffda" stroke-width="1" />
+            <line x1="50" y1="0" x2="50" y2="30" stroke="#64ffda" stroke-width="1" />
+            <line x1="50" y1="70" x2="50" y2="100" stroke="#64ffda" stroke-width="1" />
+        </svg>
+    </div>
+
+    <script>
+        // Global variables
+        let video, canvas, ctx;
+        let faceMesh, camera;
+        let landmarks = [];
+        let faceDetected = false;
+        let animationFrameId;
+        let lastFrameTime = 0;
+        let frameRate = 0;
+        let threeScene, threeCamera, threeRenderer;
+        let faceMeshGeometry, faceMeshMaterial, faceMeshObject;
+        let isInitialized = false;
+        let systemStatus = "BOOTING";
+        let batteryLevel = 85;
+        let cpuUsage = 32;
+        let memoryUsage = "1.2GB/4GB";
+        let latency = 12;
+        let moodAnalysis = "NEUTRAL";
+        let notifications = [
+            { time: "16:42:03", message: "Facial recognition system online" },
+            { time: "16:42:05", message: "Tracking module initialized" },
+            { time: "16:42:10", message: "AR interface rendering" }
+        ];
+        
+        // Initialize the application
+        async function init() {
+            // Simulate loading
+            await simulateLoading();
+            
+            // Setup video
+            video = document.getElementById('video-input');
+            canvas = document.getElementById('output-canvas');
+            ctx = canvas.getContext('2d');
+            
+            // Set canvas size
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            // Initialize FaceMesh
+            faceMesh = new FaceMesh({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+                }
+            });
+            
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            faceMesh.onResults(onResults);
+            
+            // Initialize camera
+            camera = new Camera(video, {
+                onFrame: async () => {
+                    await faceMesh.send({image: video});
+                },
+                width: 1280,
+                height: 720
+            });
+            
+            // Start camera
+            camera.start()
+                .then(() => {
+                    console.log("Camera started");
+                    initThreeJS();
+                    showHUDElements();
+                    startFacialScan();
+                    updateSystemStatus("ONLINE");
+                })
+                .catch(error => {
+                    console.error("Error starting camera:", error);
+                    updateSystemStatus("ERROR");
+                    addNotification("Camera access denied or not available");
+                });
+            
+            // Add event listener for window resize
+            window.addEventListener('resize', onWindowResize);
+            
+            // Start animation loop
+            animate();
+        }
+        
+        // Simulate loading screen
+        async function simulateLoading() {
+            const loadingBar = document.getElementById('loading-bar');
+            const loadingStatus = document.getElementById('loading-status');
+            const loadingScreen = document.getElementById('loading-screen');
+            
+            const steps = [
+                { progress: 10, message: "Loading core modules..." },
+                { progress: 25, message: "Initializing facial recognition..." },
+                { progress: 40, message: "Calibrating tracking systems..." },
+                { progress: 60, message: "Loading AR interface components..." },
+                { progress: 75, message: "Connecting to JARVIS network..." },
+                { progress: 90, message: "Preparing holographic displays..." },
+                { progress: 100, message: "System ready. Launching interface..." }
+            ];
+            
+            for (const step of steps) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                loadingBar.style.width = `${step.progress}%`;
+                loadingStatus.textContent = step.message;
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 800));
+            loadingScreen.style.opacity = 0;
+            await new Promise(resolve => setTimeout(resolve, 500));
+            loadingScreen.style.display = 'none';
+        }
+        
+        // Initialize Three.js for 3D face mesh
+        function initThreeJS() {
+            // Create scene
+            threeScene = new THREE.Scene();
+            
+            // Create camera
+            threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            threeCamera.position.z = 5;
+            
+            // Create renderer
+            threeRenderer = new THREE.WebGLRenderer({ alpha: true });
+            threeRenderer.setSize(window.innerWidth, window.innerHeight);
+            threeRenderer.domElement.style.position = 'absolute';
+            threeRenderer.domElement.style.top = '0';
+            threeRenderer.domElement.style.left = '0';
+            threeRenderer.domElement.style.zIndex = '15';
+            document.body.appendChild(threeRenderer.domElement);
+            
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            threeScene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0x64ffda, 1);
+            directionalLight.position.set(0, 1, 1);
+            threeScene.add(directionalLight);
+            
+            // Create face mesh geometry (will be updated with landmarks)
+            const vertices = new Float32Array(468 * 3); // 468 landmarks, 3 coordinates each
+            faceMeshGeometry = new THREE.BufferGeometry();
+            faceMeshGeometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+            
+            // Create material
+            faceMeshMaterial = new THREE.PointsMaterial({
+                color: 0x64ffda,
+                size: 2,
+                transparent: true,
+                opacity: 0.7
+            });
+            
+            // Create mesh
+            faceMeshObject = new THREE.Points(faceMeshGeometry, faceMeshMaterial);
+            threeScene.add(faceMeshObject);
+        }
+        
+        // Show HUD elements with animation
+        function showHUDElements() {
+            const hudElements = document.querySelectorAll('.hud-element');
+            
+            hudElements.forEach((element, index) => {
+                setTimeout(() => {
+                    element.style.opacity = '1';
+                }, index * 200);
+            });
+        }
+        
+        // Start facial scan animation
+        function startFacialScan() {
+            const scanningLine = document.getElementById('scanning-line');
+            scanningLine.style.width = '100%';
+            scanningLine.style.opacity = '0.7';
+            scanningLine.style.animation = 'scan 3s infinite';
+            
+            const faceScanner = document.getElementById('face-scanner');
+            faceScanner.style.opacity = '0.7';
+            faceScanner.style.animation = 'pulse 2s infinite';
+            
+            addNotification("Facial scan initiated");
+        }
+        
+        // Handle FaceMesh results
+        function onResults(results) {
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                landmarks = results.multiFaceLandmarks[0];
+                faceDetected = true;
+                
+                // Update face target box
+                updateFaceTargetBox(results.image, landmarks);
+                
+                // Update face scanner position
+                updateFaceScanner(results.image, landmarks);
+                
+                // Update 3D face mesh
+                updateFaceMesh(landmarks);
+                
+                // Update HUD data
+                updateHUDData(true);
+                
+                if (!isInitialized) {
+                    isInitialized = true;
+                    addNotification("Face detected. Tracking initialized.");
+                }
+            } else {
+                faceDetected = false;
+                updateHUDData(false);
+            }
+        }
+        
+        // Update face target box
+        function updateFaceTargetBox(image, landmarks) {
+            const faceTarget = document.getElementById('face-target');
+            
+            // Calculate face bounding box
+            let minX = 1, minY = 1, maxX = 0, maxY = 0;
+            
+            for (const landmark of landmarks) {
+                minX = Math.min(minX, landmark.x);
+                minY = Math.min(minY, landmark.y);
+                maxX = Math.max(maxX, landmark.x);
+                maxY = Math.max(maxY, landmark.y);
+            }
+            
+            // Add padding
+            const padding = 0.05;
+            minX = Math.max(0, minX - padding);
+            minY = Math.max(0, minY - padding);
+            maxX = Math.min(1, maxX + padding);
+            maxY = Math.min(1, maxY + padding);
+            
+            // Convert to screen coordinates
+            const width = maxX - minX;
+            const height = maxY - minY;
+            
+            const screenX = minX * window.innerWidth;
+            const screenY = minY * window.innerHeight;
+            const screenWidth = width * window.innerWidth;
+            const screenHeight = height * window.innerHeight;
+            
+            // Update target box
+            faceTarget.style.left = `${screenX}px`;
+            faceTarget.style.top = `${screenY}px`;
+            faceTarget.style.width = `${screenWidth}px`;
+            faceTarget.style.height = `${screenHeight}px`;
+            faceTarget.style.opacity = '1';
+        }
+        
+        // Update face scanner
+        function updateFaceScanner(image, landmarks) {
+            const faceScanner = document.getElementById('face-scanner');
+            
+            // Use nose tip (landmark 4) as center point
+            const noseTip = landmarks[4];
+            
+            const screenX = noseTip.x * window.innerWidth;
+            const screenY = noseTip.y * window.innerHeight;
+            
+            // Calculate face width for scanner size
+            const leftCheek = landmarks[234];
+            const rightCheek = landmarks[454];
+            const faceWidth = Math.abs(rightCheek.x - leftCheek.x) * window.innerWidth;
+            
+            // Update scanner
+            faceScanner.style.left = `${screenX}px`;
+            faceScanner.style.top = `${screenY}px`;
+            faceScanner.style.width = `${faceWidth * 0.8}px`;
+            faceScanner.style.height = `${faceWidth * 0.8}px`;
+            faceScanner.style.marginLeft = `${-faceWidth * 0.4}px`;
+            faceScanner.style.marginTop = `${-faceWidth * 0.4}px`;
+        }
+        
+        // Update 3D face mesh
+        function updateFaceMesh(landmarks) {
+            if (!faceMeshGeometry) return;
+            
+            const positions = faceMeshGeometry.attributes.position.array;
+            
+            for (let i = 0; i < landmarks.length; i++) {
+                const landmark = landmarks[i];
+                
+                // Convert from normalized coordinates to Three.js coordinates
+                positions[i * 3] = (landmark.x - 0.5) * 10;
+                positions[i * 3 + 1] = -(landmark.y - 0.5) * 10; // Flip Y axis
+                positions[i * 3 + 2] = landmark.z * 10;
+            }
+            
+            faceMeshGeometry.attributes.position.needsUpdate = true;
+        }
+        
+        // Update HUD data
+        function updateHUDData(faceDetected) {
+            // Update face data
+            document.getElementById('face-confidence').textContent = faceDetected ? "98%" : "0%";
+            document.getElementById('landmarks-count').textContent = faceDetected ? "468/468" : "0/468";
+            document.getElementById('tracking-status').textContent = faceDetected ? "ACTIVE" : "SEARCHING";
+            
+            // Update system info with random variations
+            cpuUsage = Math.floor(30 + Math.random() * 15);
+            document.getElementById('cpu-usage').textContent = `${cpuUsage}%`;
+            
+            const memoryBase = 1.2 + Math.random() * 0.4;
+            document.getElementById('memory-usage').textContent = `${memoryBase.toFixed(1)}GB/4GB`;
+            
+            document.getElementById('framerate').textContent = `${frameRate} FPS`;
+            
+            latency = Math.floor(10 + Math.random() * 8);
+            document.getElementById('latency').textContent = `${latency}ms`;
+            
+            // Update battery (slowly decreasing)
+            batteryLevel = Math.max(0, batteryLevel - 0.01);
+            document.getElementById('battery-level').style.width = `${batteryLevel}%`;
+            
+            const batteryHours = Math.floor(batteryLevel / 20);
+            const batteryMinutes = Math.floor((batteryLevel % 20) / 20 * 60);
+            document.getElementById('battery-text').textContent = 
+                `${Math.floor(batteryLevel)}% - ${batteryHours}:${batteryMinutes.toString().padStart(2, '0')}:00 REMAINING`;
+            
+            // Update mood analysis occasionally
+            if (Math.random() < 0.01) {
+                const moods = ["NEUTRAL", "FOCUSED", "CURIOUS", "ATTENTIVE", "CALM"];
+                moodAnalysis = moods[Math.floor(Math.random() * moods.length)];
+                document.getElementById('mood-analysis').textContent = moodAnalysis;
+            }
+            
+            // Update radar blip position based on face position
+            if (faceDetected && landmarks.length > 0) {
+                const noseTip = landmarks[4];
+                const blipX = 50 + (noseTip.x - 0.5) * 80;
+                const blipY = 50 + (noseTip.y - 0.5) * 80;
+                
+                document.getElementById('radar-blip').style.left = `${blipX}%`;
+                document.getElementById('radar-blip').style.top = `${blipY}%`;
+            }
+            
+            // Update status bar
+            document.getElementById('status-bar').style.width = faceDetected ? "100%" : "60%";
+        }
+        
+        // Update system status
+        function updateSystemStatus(status) {
+            systemStatus = status;
+            document.getElementById('system-status').textContent = status;
+            addNotification(`System status: ${status}`);
+        }
+        
+        // Add notification
+        function addNotification(message) {
+            const now = new Date();
+            const timeString = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+            
+            notifications.push({ time: timeString, message });
+            
+            // Keep only the last 5 notifications
+            if (notifications.length > 5) {
+                notifications.shift();
+            }
+            
+            // Update notification list
+            const notificationList = document.getElementById('notification-list');
+            notificationList.innerHTML = '';
+            
+            notifications.forEach(notification => {
+                const notificationElement = document.createElement('div');
+                notificationElement.className = 'notification';
+                notificationElement.innerHTML = `
+                    <div class="text-xs text-gray-400">${notification.time}</div>
+                    <div>${notification.message}</div>
+                `;
+                notificationList.appendChild(notificationElement);
+            });
+        }
+        
+        // Animation loop
+        function animate(timestamp) {
+            animationFrameId = requestAnimationFrame(animate);
+            
+            // Calculate frame rate
+            if (timestamp) {
+                const deltaTime = timestamp - lastFrameTime;
+                if (deltaTime > 0) {
+                    frameRate = Math.round(1000 / deltaTime);
+                }
+                lastFrameTime = timestamp;
+            }
+            
+            // Render Three.js scene
+            if (threeRenderer && threeScene && threeCamera) {
+                threeRenderer.render(threeScene, threeCamera);
+            }
+        }
+        
+        // Handle window resize
+        function onWindowResize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            if (threeCamera && threeRenderer) {
+                threeCamera.aspect = window.innerWidth / window.innerHeight;
+                threeCamera.updateProjectionMatrix();
+                threeRenderer.setSize(window.innerWidth, window.innerHeight);
+            }
+        }
+        
+        // Start the application when the page loads
+        window.addEventListener('load', init);
+    </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9695e1b4b512a6bb',t:'MTc1NDIyNDgwNy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
